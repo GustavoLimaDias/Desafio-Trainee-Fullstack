@@ -1,75 +1,442 @@
-# Desafio Técnico - Trainee Fullstack (JavaScript/TypeScript)
+# Analisador de Documentos
 
-## Objetivo
+Portal web em que usuários de um escritório cadastram textos jurídicos (trechos de contratos, petições, notificações, decisões) e geram, para cada um, uma **análise automática** com o tipo do documento, um resumo e os pontos de atenção (multas, prazos, juros, rescisão etc.).
 
-Queremos avaliar suas habilidades em aplicações web com **Node.js**, **React** e **PostgreSQL**, além da sua capacidade de organizar o código, testá-lo e documentá-lo.
+A análise é feita por **regras fixas e determinísticas**, definidas no enunciado do desafio, e fica isolada atrás de uma interface para que possa ser trocada no futuro por uma implementação com IA sem mudar rotas, banco ou front-end.
 
-Você vai desenvolver um **Analisador de Documentos**: um portal em que usuários do escritório cadastram textos jurídicos (trechos de contratos, notificações, decisões etc.) e geram uma **análise automática** de cada um, com classificação, resumo e pontos de atenção.
+Projeto desenvolvido para o desafio técnico Trainee Fullstack da DFA Correspondente. O enunciado original está no histórico do repositório (commit `3a47de9`). **Todos os dados usados em testes, exemplos e demonstração são fictícios.**
 
-Não esperamos um sistema perfeito. Um projeto menor, bem feito e bem documentado vale mais do que um projeto grande e desorganizado.
+## Sumário
 
-**Importante:** use apenas dados fictícios. Não cadastre documentos reais, nomes reais ou dados pessoais de terceiros.
+1. [Funcionalidades](#funcionalidades)
+2. [Regras de negócio](#regras-de-negócio)
+3. [Tecnologias](#tecnologias)
+4. [Arquitetura e estrutura de pastas](#arquitetura-e-estrutura-de-pastas)
+5. [Pré-requisitos](#pré-requisitos)
+6. [Instalação do zero (Windows)](#instalação-do-zero-windows)
+7. [Variáveis de ambiente](#variáveis-de-ambiente)
+8. [Como usar o sistema](#como-usar-o-sistema)
+9. [Dados fictícios para testes manuais](#dados-fictícios-para-testes-manuais)
+10. [Exemplos oficiais do analisador](#exemplos-oficiais-do-analisador)
+11. [API](#api)
+12. [Testes](#testes)
+13. [Build e CI](#build-e-ci)
+14. [Decisões técnicas](#decisões-técnicas)
+15. [Avaliação do analisador](#avaliação-do-analisador)
+16. [Limitações conhecidas](#limitações-conhecidas)
+17. [Melhorias futuras](#melhorias-futuras)
+18. [Solução de problemas](#solução-de-problemas)
 
-## Instruções
+## Funcionalidades
 
-1. Faça um **fork** deste repositório para a sua conta do GitHub.
-2. Desenvolva a solução **no seu fork**, versionando com Git ao longo do desenvolvimento: commits pequenos, com mensagens claras. Recomendamos o padrão [Conventional Commits](https://www.conventionalcommits.org/pt-br/) (`feat:`, `fix:`, `test:`, `docs:`...).
-3. Trabalhe em uma **branch** separada e, ao final, abra um **Pull Request** para a `main` do seu próprio fork, descrevendo o que foi feito.
-4. Envie o link do seu fork para **dellareti.invest@gmail.com** e **rafaelaaraujo.investleiloes@gmail.com**, informando seu nome e alguma informação extra necessária. 
-5. **Prazo:** até **14 de outubro de 2026**.
+### Requisitos obrigatórios do desafio
 
-O histórico de commits também faz parte da avaliação.
+- **Usuários:** cadastro (nome, e-mail e senha), login com token JWT, logout e aviso de sessão expirada.
+- **Documentos:** listagem do mais recente para o mais antigo, com opção de inverter a ordem e de filtrar só os documentos do usuário logado; página de detalhes; criação e edição com o mesmo formulário; remoção com confirmação.
+- **Permissões:** só o autor vê e usa os botões de editar, remover e analisar, e a API responde `403` para os demais usuários.
+- **Análise:** botão "Analisar documento" (apenas para o autor), que executa o analisador por regras, salva o resultado no banco e exibe tipo, resumo e pontos de atenção.
+- **API:** validação de todas as entradas, status HTTP e formato de erro padronizados, datas em ISO 8601.
+- **Banco:** PostgreSQL com migrations.
+- **Testes automatizados:** o analisador gera exatamente a saída esperada dos 6 exemplos oficiais, e as regras da API são verificadas com banco real.
 
-## Requisitos
+### Diferenciais implementados
 
-### Módulo: Usuários
+| Diferencial | O que foi feito | Como foi verificado |
+|---|---|---|
+| Busca por título e paginação | Parâmetros opcionais `busca`, `pagina` e `por_pagina` em `GET /documentos` (sem eles, a resposta é exatamente a do enunciado). No front-end, campo de busca e botões "Anterior"/"Próxima", de 10 em 10 | Testes de integração e chamadas reais à API |
+| Importação de `.txt` | Botão "Carregar arquivo .txt" no formulário de documento: o navegador lê o arquivo e preenche o campo conteúdo. O arquivo não é enviado nem guardado no servidor | Build do front-end. Não há teste automatizado de front-end |
+| Testes de integração com banco real | `backend/test/api.test.js` sobe a API e usa um banco PostgreSQL só para testes | `npm test` |
+| CI com GitHub Actions | `.github/workflows/ci.yml` roda os testes do back-end com PostgreSQL e o build do front-end a cada push e pull request | Os testes foram executados localmente só com as variáveis definidas no workflow; o workflow em si roda pela primeira vez no GitHub após o push |
 
-**Página - Cadastro**
-- Formulário com nome, e-mail e senha
-- Validações:
-  - **nome:** obrigatório, até 100 caracteres
-  - **e-mail:** obrigatório, em formato de e-mail válido
-  - **senha:** obrigatória, no mínimo 8 caracteres
-- Exibir mensagem de erro caso o e-mail já esteja cadastrado
-- Endpoint: `POST /auth/cadastro`, respondendo `201` com o usuário criado, no mesmo formato de `usuario` do login: `{ "id": 1, "nome": "Ana Souza", "email": "ana@exemplo.com" }`
-- E-mail já cadastrado: `409`
+Também foram incluídos, por segurança: limite de tentativas de login, limite de 72 bytes para a senha no cadastro e validação de formato de e-mail mais estrita (detalhes em [Regras de negócio](#regras-de-negócio)).
 
-**Página - Login**
-- Login por e-mail e senha
-- Após o login, o usuário é direcionado para a lista de documentos
-- Permitir logout
-- Endpoint: `POST /auth/login`, respondendo `200` com um token (ex.: JWT) e os dados do usuário:
+## Regras de negócio
+
+### Usuários
+
+- **Nome:** obrigatório, até 100 caracteres.
+- **E-mail:** obrigatório e único, sem diferenciar maiúsculas: é salvo em minúsculas e convertido antes de comparar, no cadastro e no login. O formato exige um domínio com partes separadas por ponto e uma extensão de pelo menos 2 letras (máximo de 254 caracteres). Isso confere só o formato: não garante que o e-mail exista nem que pertença a quem se cadastrou.
+- **Senha:** obrigatória, com no mínimo 8 caracteres e no máximo 72 bytes (veja [Decisões técnicas](#decisões-técnicas)). É salva apenas como hash `bcrypt` e nunca é retornada pela API.
+- **E-mail já cadastrado:** `409`.
+- **Login:** e-mail inexistente e senha errada respondem `401` com a mesma mensagem.
+- **Limite de tentativas:** depois de 5 senhas erradas para o mesmo e-mail a partir do mesmo IP, o login responde `429` por 15 minutos, mesmo com a senha certa. Um login certo antes disso zera a contagem.
+- **Sessão:** o token vale por 8 horas. Quando a API recusa o token, o front-end desloga e avisa no login que a sessão expirou.
+- **Cadastro:** não faz login automático; o usuário é levado à página de login.
+
+### Documentos
+
+- **Acesso:** todas as páginas e endpoints exigem login. Qualquer usuário logado vê todos os documentos, mas só o **autor** pode editar, remover ou analisar.
+- **Título:** obrigatório, até 200 caracteres.
+- **Conteúdo:** obrigatório, até 50.000 caracteres.
+- **Campos em branco:** título ou conteúdo vazios ou só com espaços e quebras de linha respondem `400`.
+- **Contagem de caracteres:** os limites contam caracteres Unicode, então um emoji conta como 1.
+- **Sem alteração no texto:** título e conteúdo são salvos **exatamente como enviados**, sem `trim`.
+- **Edição:** o `PUT` sempre recebe título e conteúdo. Se o conteúdo mudar (comparação exata), a análise existente é apagada. Se só o título mudar, a análise é mantida.
+- **Remoção:** remove também a análise.
+
+### Analisador
+
+- **Entrada e saída:** recebe apenas o `conteudo` do documento e devolve `{ tipo, resumo, pontos_de_atencao }`.
+- **Tipo:** `contrato`, `peticao`, `decisao`, `notificacao` ou `outro`. Vence o tipo com mais termos diferentes do glossário encontrados; em empate, a prioridade é `decisao`, `peticao`, `notificacao`, `contrato`; sem nenhum termo, o tipo é `outro`.
+- **Resumo:** as duas primeiras frases, cortadas em 300 caracteres com `...`.
+- **Pontos de atenção:** frases com termos como multa, prazo, juros, rescisão, indenização, despejo e honorários, sem repetir frases idênticas.
+- **Detalhes das regras:** normalização Unicode, divisão em frases e comparação de palavras inteiras sem acento e sem diferenciar maiúsculas seguem exatamente o enunciado. Os exemplos comentados estão em [`exemplos/README.md`](exemplos/README.md).
+- **Uma análise por documento:** analisar de novo substitui a análise anterior. O banco guarda qual analisador gerou a análise (`"regras"`) e quando.
+
+## Tecnologias
+
+| Tecnologia | Função |
+|---|---|
+| Node.js (JavaScript, ES Modules) | Ambiente de execução do back-end e das ferramentas |
+| Express 5 | Servidor HTTP e rotas da API. Encaminha erros de funções `async` ao middleware de erro sem `try/catch` em cada controller |
+| PostgreSQL + `pg` | Banco de dados, acessado com SQL puro e consultas parametrizadas |
+| `bcryptjs` | Hash de senhas, em JavaScript puro (sem compilação nativa no Windows) |
+| `jsonwebtoken` | Geração e validação do token JWT (HS256, validade de 8 horas) |
+| `node:test` + `fetch` nativo | Testes automatizados, sem bibliotecas extras |
+| React 19 | Interface do usuário |
+| React Router 7 | Rotas do front-end e proteção das páginas logadas |
+| Vite 8 | Servidor de desenvolvimento e build do front-end |
+| CSS puro | Estilos (`frontend/src/estilos.css`), sem biblioteca de UI |
+| GitHub Actions | Integração contínua |
+
+## Arquitetura e estrutura de pastas
+
+```
+.
+├── backend/
+│   ├── src/
+│   │   ├── server.js        inicia a API (valida a configuração antes de abrir a porta)
+│   │   ├── app.js           monta o Express: CORS, JSON, rotas e tratamento de erros
+│   │   ├── config.js        lê as variáveis de ambiente
+│   │   ├── erros.js         ErroApp: status HTTP + código de erro padronizado
+│   │   ├── validacao.js     validação das entradas
+│   │   ├── rotas/           URL → middleware + controller
+│   │   ├── controllers/     lê a requisição, valida e monta a resposta
+│   │   ├── services/        regras de negócio (autor, regra do PUT, hash, token, limite de login)
+│   │   ├── repositorios/    SQL
+│   │   ├── analisadores/    interface do analisador, glossário e implementação por regras
+│   │   ├── middlewares/     autenticação e tratamento de erros
+│   │   └── db/              conexão, transação, migrations e script de demonstração
+│   └── test/                testes do analisador e de integração da API
+├── frontend/
+│   └── src/
+│       ├── paginas/         uma por tela (login, cadastro, lista, detalhes, novo, editar)
+│       ├── componentes/     RotaProtegida, DocumentoForm, Campo, EtiquetaTipo, Carregando/MensagemErro
+│       ├── api.js           chamadas à API com o token; em 401, desloga
+│       ├── AuthContext.jsx  usuário logado (token e dados no localStorage)
+│       └── useRequisicao.js estados de carregamento e erro das consultas
+├── exemplos/                6 documentos oficiais do desafio e as saídas esperadas
+└── .github/workflows/       pipeline de CI
+```
+
+O fluxo de uma requisição é `rotas → controllers → services → repositórios`. O analisador é usado só pelo service de documentos, por meio de `obterAnalisador()`.
+
+## Pré-requisitos
+
+- **Node.js 22.12 ou superior**, com o npm que o acompanha. O Vite 8 exige no mínimo essa versão, e os scripts usam `--env-file` do Node. O desenvolvimento foi feito com o Node 24.15 e o npm 12.
+- **PostgreSQL** com um usuário que possa criar bancos. O desenvolvimento foi feito com o PostgreSQL 18; a CI usa o 16.
+- **Git**, para clonar o repositório.
+
+## Instalação do zero (Windows)
+
+Os comandos abaixo são para o **PowerShell**. Em Linux ou macOS, troque `Copy-Item` por `cp`.
+
+### 1. Clonar o repositório
+
+```powershell
+git clone https://github.com/GustavoLimaDias/Desafio-Trainee-Fullstack.git
+cd Desafio-Trainee-Fullstack
+```
+
+### 2. Criar os bancos
+
+São dois bancos: um para a aplicação e outro, separado, para os testes de integração (**o banco de testes é apagado a cada execução dos testes**).
+
+```powershell
+createdb -h localhost -U postgres analisador_documentos
+createdb -h localhost -U postgres analisador_documentos_test
+```
+
+Se o `createdb` não estiver no PATH, use o caminho completo da sua instalação, por exemplo:
+
+```powershell
+& "C:\Program Files\PostgreSQL\18\bin\createdb.exe" -h localhost -U postgres analisador_documentos
+& "C:\Program Files\PostgreSQL\18\bin\createdb.exe" -h localhost -U postgres analisador_documentos_test
+```
+
+### 3. Configurar e iniciar o back-end
+
+Na pasta `backend`:
+
+```powershell
+cd backend
+npm install
+Copy-Item .env.example .env
+```
+
+Edite o arquivo `backend/.env` com o usuário e a senha do seu PostgreSQL e com um `JWT_SECRET` aleatório (veja [Variáveis de ambiente](#variáveis-de-ambiente)). Para gerar o segredo:
+
+```powershell
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Crie as tabelas. Este comando também serve para verificar a conexão com o banco:
+
+```powershell
+npm run db:migrar
+```
+
+A saída esperada é `Aplicada: 001_criar_tabelas.sql`, ou `Nenhuma migration pendente.` se as tabelas já existirem. Se aparecer `Falha ao migrar: ...`, veja [Solução de problemas](#solução-de-problemas).
+
+Inicie a API (ela fica rodando neste terminal):
+
+```powershell
+npm run dev
+```
+
+A API sobe em `http://localhost:3000` e mostra `API rodando em http://localhost:3000`. O `npm run dev` reinicia sozinho quando um arquivo muda; o `npm start` executa sem esse recarregamento.
+
+### 4. Iniciar o front-end
+
+Em **outro terminal**, a partir da raiz do repositório:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Abra `http://localhost:5173`. O front-end chama a API em `http://localhost:3000`; para usar outro endereço, copie `frontend/.env.example` para `frontend/.env` e ajuste `VITE_API_URL`.
+
+### 5. (Opcional) Carregar os dados de demonstração
+
+O banco começa **vazio**. Para ter usuários e documentos prontos, veja [Dados fictícios para testes manuais](#dados-fictícios-para-testes-manuais).
+
+## Variáveis de ambiente
+
+### `backend/.env` (copiado de `backend/.env.example`)
+
+| Variável | Obrigatória | Finalidade | Exemplo fictício |
+|---|---|---|---|
+| `DATABASE_URL` | Sim | Conexão com o banco da aplicação | `postgres://usuario:senha@localhost:5432/analisador_documentos` |
+| `JWT_SECRET` | Sim | Segredo para assinar os tokens. Use um valor aleatório e não o compartilhe | `troque-por-um-valor-aleatorio` |
+| `DATABASE_URL_TEST` | Só para os testes de integração | Banco de testes, **apagado a cada execução**. Precisa ser diferente do `DATABASE_URL` | `postgres://usuario:senha@localhost:5432/analisador_documentos_test` |
+| `PORT` | Não (padrão `3000`) | Porta da API | `3000` |
+| `FRONTEND_URL` | Não (padrão `http://localhost:5173`) | Origem do front-end liberada no CORS | `http://localhost:5173` |
+| `ANALISADOR` | Não (padrão `regras`) | Implementação do analisador. Hoje só existe `regras`; outro valor impede a API de subir | `regras` |
+
+Se a senha do banco tiver caracteres especiais (`@`, `:`, `/`, `#`), codifique-os na URL (ex.: `@` vira `%40`).
+
+O arquivo `.env` está no `.gitignore` e não deve ser commitado.
+
+### `frontend/.env` (opcional, copiado de `frontend/.env.example`)
+
+| Variável | Obrigatória | Finalidade | Exemplo |
+|---|---|---|---|
+| `VITE_API_URL` | Não (padrão `http://localhost:3000`) | Endereço da API. É fixado no momento do build | `http://localhost:3000` |
+
+## Como usar o sistema
+
+1. **Criar conta:** em `http://localhost:5173`, clique em **Cadastre-se** e informe nome, e-mail e senha (mínimo de 8 caracteres). Depois do cadastro, você é levado ao login.
+2. **Entrar:** informe e-mail e senha. A lista de documentos é aberta.
+3. **Lista de documentos:**
+   - mostra título, autor, data de criação e tipo (ou "Não analisado");
+   - o botão de ordenação alterna entre "Mais recentes primeiro" e "Mais antigos primeiro";
+   - "Apenas meus documentos" filtra os seus;
+   - o campo de busca filtra pelo título;
+   - a lista mostra 10 documentos por página.
+4. **Novo documento:** clique em **Novo documento**, preencha título e conteúdo (ou use **Carregar arquivo .txt**) e salve. A página de detalhes é aberta.
+5. **Analisar:** nos detalhes de um documento seu, clique em **Analisar documento**. O tipo, o resumo e os pontos de atenção aparecem no painel "Análise". Analisar de novo substitui a análise.
+6. **Editar:** clique em **Editar**. Se você mudar o conteúdo, a análise é apagada e precisa ser gerada de novo.
+7. **Remover:** clique em **Remover** e confirme. O documento e a análise dele são apagados.
+8. **Sair:** botão **Sair** no topo.
+
+## Dados fictícios para testes manuais
+
+O banco começa vazio. Há duas formas de ter usuários para testar.
+
+**Opção 1: cadastrar pela interface.** Crie duas contas pela página de cadastro, com e-mails fictícios como `ana@exemplo.com` e `bruno@exemplo.com`.
+
+**Opção 2: script de demonstração.** Execute uma vez, na pasta `backend`, depois de configurar o `.env` e rodar `npm run db:migrar`. A API não precisa estar rodando:
+
+```powershell
+npm run db:demo
+```
+
+O script cadastra dois usuários e cinco documentos fictícios no banco do `DATABASE_URL`:
+- **Segurança:** mostra qual banco vai alterar (ex.: `Banco: localhost:5432/analisador_documentos`) e se recusa a rodar com `NODE_ENV=production` ou quando o `DATABASE_URL` é igual ao `DATABASE_URL_TEST`.
+- **Pode ser repetido:** não duplica registros, porque usuários com o mesmo e-mail e documentos com o mesmo título do mesmo autor são mantidos. Não apaga nem altera dados existentes; um usuário que já exista **não** tem a senha trocada (se você já cadastrou `ana@exemplo.com` ou `bruno@exemplo.com` pela interface, vale a senha que você escolheu).
+- **Mesmas regras da aplicação:** cria os usuários pelo mesmo serviço do cadastro (senha com hash) e as análises pelo mesmo serviço do botão "Analisar".
+- **Só manual:** nunca é executado automaticamente. Nem a API nem as migrations o chamam.
+
+**Usuários criados pelo script.** As senhas são fictícias e servem **apenas para ambiente local de teste**; não use essas senhas em nenhum ambiente real.
+
+| Nome | E-mail | Senha | Para que serve |
+|---|---|---|---|
+| Ana Souza | `ana@exemplo.com` | `Demo@2026` | Uso normal: tem 3 documentos, analisados e não analisados |
+| Bruno Lima | `bruno@exemplo.com` | `Demo@2026` | Conferir permissões e o filtro "Apenas meus documentos" |
+
+**Documentos criados pelo script:**
+
+| Autor | Título | Análise salva |
+|---|---|---|
+| Ana Souza | Contrato de prestação de serviços - Estúdio Aurora | `contrato` |
+| Ana Souza | Notificação extrajudicial - Condomínio Jardim dos Ipês | nenhuma (ao analisar: `notificacao`) |
+| Ana Souza | Ata de reunião interna - organização da agenda | `outro` (nenhum termo do glossário, sem pontos de atenção) |
+| Bruno Lima | Petição inicial - cobrança de serviços de reforma | `peticao` |
+| Bruno Lima | Sentença - ação de obrigação de fazer | nenhuma (ao analisar: `decisao`) |
+
+**Roteiro para verificar permissões:**
+
+1. Entre como **Ana**. A lista mostra os 5 documentos. Inverta a ordem e marque "Apenas meus documentos": ficam 3.
+2. Abra a notificação e clique em **Analisar documento**. Edite só o título: a análise continua. Edite o conteúdo: a análise é apagada.
+3. Abra um documento do Bruno: ele aparece, mas sem os botões de editar, remover e analisar.
+4. Saia e entre como **Bruno**. Os documentos da Ana aparecem só para leitura, e "Apenas meus documentos" mostra os 2 dele. A recusa da API (`403`) para quem não é o autor é verificada em `backend/test/api.test.js`.
+
+**Para remover os dados de demonstração** (as análises vão junto pelo `ON DELETE CASCADE`), execute no banco de desenvolvimento, por exemplo com `psql "<sua DATABASE_URL>"`:
+
+```sql
+DELETE FROM documentos WHERE autor_id IN (SELECT id FROM usuarios WHERE email IN ('ana@exemplo.com', 'bruno@exemplo.com'));
+DELETE FROM usuarios WHERE email IN ('ana@exemplo.com', 'bruno@exemplo.com');
+```
+
+Isso também apaga qualquer documento que você tenha criado logado como Ana ou Bruno.
+
+## Exemplos oficiais do analisador
+
+A pasta [`exemplos/`](exemplos/) contém os 6 documentos fictícios do enunciado (`.txt`) e a saída esperada de cada um (`.esperado.json`). Esses arquivos não são alterados pelo projeto.
+
+| Arquivo | Finalidade | Tipo esperado | Pontos de atenção |
+|---|---|---|---|
+| `01-contrato-locacao` | Documento comum de contrato | `contrato` | 3 |
+| `02-peticao-indenizacao` | Documento comum de petição (resumo cortado em 300 caracteres) | `peticao` | 4 |
+| `03-sentenca-cobranca` | Documento comum de decisão | `decisao` | 3 |
+| `04-notificacao-aluguel` | Documento comum de notificação | `notificacao` | 2 |
+| `05-procuracao` | Documento sem termos do glossário | `outro` | 0 |
+| `06-casos-de-borda` | Casos de borda: `\r\n` e `\r`, tab, espaço não separável, acentos em NFD, emojis, empate de tipos e frases repetidas | `decisao` | 6 |
+
+**Comparação automática** (na pasta `backend`, não precisa de banco):
+
+```powershell
+node --test test/analisador.regras.test.js
+```
+
+O teste lê cada `.txt` diretamente da pasta `exemplos/`, executa o analisador e compara o resultado com o `.esperado.json` correspondente. Ele também roda dentro do `npm test`.
+
+**Comparação pela interface:** crie um documento com o conteúdo de um dos `.txt` e clique em **Analisar documento**. O tipo, o resumo e os pontos de atenção devem ser iguais aos do `.esperado.json` de mesmo nome. Para os exemplos 01 a 05, copiar e colar funciona. O exemplo 06 tem caracteres invisíveis que o navegador pode alterar ao colar; para ele, prefira o botão **Carregar arquivo .txt**, que preenche o conteúdo com o texto do arquivo como ele é, ou use o teste automatizado.
+
+## API
+
+Base: `http://localhost:3000`. Corpo das requisições e respostas em JSON. As rotas autenticadas recebem o cabeçalho `Authorization: Bearer <token>`.
+
+| Método | Rota | Autenticação | Sucesso | Erros |
+|---|---|---|---|---|
+| POST | `/auth/cadastro` | não | `201` usuário | `400`, `409` |
+| POST | `/auth/login` | não | `200` token + usuário | `400`, `401`, `429` |
+| GET | `/documentos` | sim | `200` lista | `400`, `401` |
+| GET | `/documentos/:id` | sim | `200` documento | `401`, `404` |
+| POST | `/documentos` | sim | `201` documento | `400`, `401` |
+| PUT | `/documentos/:id` | sim (autor) | `200` documento | `400`, `401`, `403`, `404` |
+| DELETE | `/documentos/:id` | sim (autor) | `204` sem corpo | `401`, `403`, `404` |
+| POST | `/documentos/:id/analise` | sim (autor) | `201` análise | `401`, `403`, `404` |
+
+### Erros
+
+Todos os erros têm o formato:
 
 ```json
+{ "erro": "VALIDACAO", "mensagem": "O campo 'titulo' é obrigatório." }
+```
+
+| Status | `erro` | Quando |
+|---|---|---|
+| `400` | `VALIDACAO` | Entrada inválida, JSON malformado ou parâmetro de consulta inválido |
+| `401` | `NAO_AUTENTICADO` | Sem token, token inválido ou expirado, login incorreto |
+| `403` | `SEM_PERMISSAO` | Usuário não é o autor do documento |
+| `404` | `NAO_ENCONTRADO` | Documento ou rota inexistente (inclui ids inválidos, como `/documentos/abc`) |
+| `409` | `CONFLITO` | E-mail já cadastrado |
+| `429` | `MUITAS_TENTATIVAS` | Excesso de senhas erradas no login (não previsto no enunciado) |
+| `500` | `ERRO_INTERNO` | Erro inesperado (não previsto no enunciado) |
+
+### Parâmetros de `GET /documentos`
+
+| Parâmetro | Valores | Padrão | Efeito |
+|---|---|---|---|
+| `ordem` | `desc` ou `asc` | `desc` | Ordem pela data de criação |
+| `meus` | `true` ou `false` | `false` | Só os documentos do usuário logado |
+| `busca` (opcional) | texto | sem filtro | Título contém o texto, sem diferenciar maiúsculas (acentos fazem diferença); vazio ou só espaços é ignorado |
+| `pagina` (opcional) | inteiro de 1 a 1.000.000 | `1` | Página desejada |
+| `por_pagina` (opcional) | inteiro de 1 a 100 | `10` | Itens por página |
+
+Sem `pagina` nem `por_pagina`, a lista traz todos os documentos. Valores diferentes dos aceitos, ou parâmetros repetidos, respondem `400`.
+
+### Exemplos
+
+**Cadastro**
+
+```http
+POST /auth/cadastro
+Content-Type: application/json
+
+{ "nome": "Ana Souza", "email": "Ana@Exemplo.com", "senha": "Demo@2026" }
+```
+
+```json
+201
+{ "id": 1, "nome": "Ana Souza", "email": "ana@exemplo.com" }
+```
+
+**Login**
+
+```http
+POST /auth/login
+Content-Type: application/json
+
+{ "email": "ana@exemplo.com", "senha": "Demo@2026" }
+```
+
+```json
+200
 {
   "token": "eyJhbGciOiJIUzI1NiIs...",
   "usuario": { "id": 1, "nome": "Ana Souza", "email": "ana@exemplo.com" }
 }
 ```
 
-- E-mail inexistente ou senha incorreta: `401`, com a mesma mensagem nos dois casos
+**Criar documento** (o `PUT /documentos/:id` recebe o mesmo corpo, sempre com os dois campos, e responde `200` no mesmo formato)
 
-**Regras**
-- A senha nunca deve ser salva em texto puro (use hash, ex.: `bcrypt`) nem retornada em nenhuma resposta da API
-- O e-mail deve ser único sem diferenciar maiúsculas de minúsculas: salve-o em minúsculas e converta para minúsculas antes de comparar, no cadastro e no login (`Ana@Exemplo.com` e `ana@exemplo.com` são o mesmo e-mail)
-- Os endpoints autenticados recebem o token no cabeçalho `Authorization: Bearer <token>`
+```http
+POST /documentos
+Authorization: Bearer <token>
+Content-Type: application/json
 
-### Módulo: Documentos (precisa estar logado)
-
-Todas as páginas e endpoints deste módulo exigem autenticação. Usuário não autenticado deve ser redirecionado para o login no front-end e receber `401` na API.
-
-**Página - Lista de Documentos**
-- Listar todos os documentos, do mais recente para o mais antigo
-- Permitir inverter a ordenação
-- Permitir filtrar apenas os documentos do usuário logado
-- Exibir título, autor, data de criação e tipo (se já analisado)
-- Endpoint: `GET /documentos?ordem=desc|asc&meus=true|false`
-  - `ordem`: `desc` (padrão) ou `asc`, pela data de criação
-  - `meus`: `false` (padrão) ou `true`
-  - Qualquer outro valor nesses parâmetros: `400`
-- Resposta `200`:
+{ "titulo": "Contrato de locação - Rua das Acácias", "conteudo": "CONTRATO DE LOCAÇÃO RESIDENCIAL\n\nPelo presente instrumento..." }
+```
 
 ```json
+201
+{
+  "id": 7,
+  "titulo": "Contrato de locação - Rua das Acácias",
+  "conteudo": "CONTRATO DE LOCAÇÃO RESIDENCIAL\n\nPelo presente instrumento...",
+  "autor": { "id": 1, "nome": "Ana Souza" },
+  "criado_em": "2026-10-06T14:30:00.000Z",
+  "atualizado_em": "2026-10-06T14:30:00.000Z",
+  "analise": null
+}
+```
+
+O `GET /documentos/:id` responde nesse mesmo formato, com a análise no campo `analise` (ou `null`).
+
+**Listar documentos**
+
+```http
+GET /documentos?ordem=asc&meus=true
+Authorization: Bearer <token>
+```
+
+```json
+200
 [
   {
     "id": 7,
@@ -83,302 +450,167 @@ Todas as páginas e endpoints deste módulo exigem autenticação. Usuário não
 
 `tipo` é `null` quando o documento ainda não foi analisado.
 
-**Página - Detalhes do Documento**
-- Exibir título, conteúdo, autor, datas de criação e atualização
-- Exibir a análise do documento, se houver
-- Exibir os botões de editar, remover e analisar **apenas para o autor** (compare o `autor.id` do documento com o `usuario.id` recebido no login)
-- Endpoint: `GET /documentos/:id`, resposta `200`:
+**Analisar documento** (substitui a análise anterior, se houver)
 
-```json
-{
-  "id": 7,
-  "titulo": "Contrato de locação - Rua das Acácias",
-  "conteudo": "CONTRATO DE LOCAÇÃO RESIDENCIAL\n\nPelo presente instrumento...",
-  "autor": { "id": 1, "nome": "Ana Souza" },
-  "criado_em": "2026-10-06T14:30:00.000Z",
-  "atualizado_em": "2026-10-06T14:30:00.000Z",
-  "analise": {
-    "tipo": "contrato",
-    "resumo": "CONTRATO DE LOCAÇÃO RESIDENCIAL Pelo presente instrumento...",
-    "pontos_de_atencao": ["..."],
-    "analisador": "regras",
-    "criado_em": "2026-10-06T14:31:00.000Z"
-  }
-}
+```http
+POST /documentos/7/analise
+Authorization: Bearer <token>
 ```
 
-`analise` é `null` quando o documento ainda não foi analisado.
-
-**Página - Formulário de Documento** (criação e edição)
-- Campos:
-  - **título:** campo de uma linha, obrigatório, até 200 caracteres
-  - **conteúdo:** campo de texto **multilinha** (`textarea`), obrigatório, até 50.000 caracteres. O usuário digita ou cola o texto do documento
-- O conteúdo deve ser salvo **exatamente como foi enviado**, preservando quebras de linha e espaços. Não aplique `trim` nem qualquer outra alteração
-- Título ou conteúdo vazios ou formados apenas por espaços em branco, incluindo quebras de linha (em JavaScript: `/^\s*$/.test(valor)`): `400`
-- O mesmo componente de formulário deve ser reutilizado na criação e na edição
-- Endpoints:
-  - `POST /documentos`: recebe `titulo` e `conteudo` e responde `201` com o documento criado
-  - `PUT /documentos/:id`: recebe **sempre os dois campos**, `titulo` e `conteudo`, e responde `200` com o documento atualizado
-  - As respostas dos dois têm o mesmo formato de `GET /documentos/:id`
-
-**Remoção**
-- Pedir confirmação antes de remover
-- Endpoint: `DELETE /documentos/:id`, respondendo `204`
-
-**Regras**
-- Somente o **autor** pode editar, remover ou analisar o documento. Para os demais usuários, a API deve retornar `403`
-- Documento inexistente: `404`
-- No `PUT`, se o `conteudo` enviado for **diferente** do salvo (comparação exata), a análise existente é apagada e o documento volta a ter `analise: null`. Se o `conteudo` for **igual** ao salvo, a análise é mantida, mesmo que o título mude
-- Ao remover um documento, a análise dele também é removida
-
-### Módulo: Análise (precisa estar logado)
-
-**Serviço - Analisador de Documentos**
-
-Crie um serviço que recebe o texto de um documento e devolve uma análise neste formato (saída do exemplo [`exemplos/01-contrato-locacao.txt`](exemplos/01-contrato-locacao.txt)):
-
 ```json
+201
 {
   "tipo": "contrato",
-  "resumo": "CONTRATO DE LOCAÇÃO RESIDENCIAL Pelo presente instrumento, de um lado Marcos Vieira Lopes, doravante denominado LOCADOR, e de outro Ana Paula Ferreira, doravante denominada LOCATÁRIA, têm entre si justo e contratado o seguinte.",
-  "pontos_de_atencao": [
-    "CLÁUSULA SEGUNDA - O prazo de vigência da locação é de 30 meses, com início em 1 de fevereiro de 2026.",
-    "O atraso no pagamento implicará multa de 10% sobre o valor devido, acrescida de juros de 1% ao mês.",
-    "CLÁUSULA QUARTA - Em caso de rescisão antecipada pela LOCATÁRIA, será devida multa equivalente a 3 aluguéis, proporcional ao tempo restante do contrato."
-  ]
+  "resumo": "CONTRATO DE LOCAÇÃO RESIDENCIAL Pelo presente instrumento, ...",
+  "pontos_de_atencao": ["CLÁUSULA SEGUNDA - O prazo de vigência da locação é de 30 meses, ..."],
+  "analisador": "regras",
+  "criado_em": "2026-10-06T14:31:00.000Z"
 }
 ```
 
-Nesta versão, a análise é feita por **regras fixas**, sem nenhuma API externa. As regras e o glossário abaixo são **obrigatórios** e devem ser seguidos exatamente: o mesmo texto de entrada deve sempre gerar a mesma saída.
+**Erro de permissão**
 
-#### Regra 0 - Entrada e definições
-
-1. O analisador recebe **apenas o campo `conteudo`** do documento (sem o título), exatamente como está salvo.
-2. Antes de aplicar as demais regras, prepare o texto nesta ordem:
-   1. Converta para a forma Unicode NFC: `texto.normalize('NFC')`.
-   2. Troque toda quebra de linha `\r\n` ou `\r` por `\n`.
-3. Nestas regras:
-   - **espaço** é qualquer caractere de espaço em branco **exceto `\n`**: espaço comum, tab, espaço não separável (comum em texto copiado do Word) etc. Em expressão regular do JavaScript: `[^\S\n]`;
-   - **caractere** é um code point Unicode. Em JavaScript, conte com `Array.from(texto).length`, e não com `texto.length`.
-
-#### Regra 1 - Comparação de termos
-
-Para verificar se um termo do glossário aparece em uma frase:
-
-1. **Normalize** a frase e o termo, nesta ordem:
-   1. `normalize('NFD')`;
-   2. remova os caracteres de U+0300 a U+036F, que são os acentos e a cedilha;
-   3. converta para minúsculas.
-
-   Assim, `Cláusula` vira `clausula` e `NOTIFICAÇÃO` vira `notificacao`.
-2. O termo só conta se aparecer como **palavra ou expressão inteira**: o caractere imediatamente antes e o imediatamente depois dele, na frase normalizada, não podem estar em `a-z` nem em `0-9`. Também conta se o termo estiver no início ou no fim da frase.
-   - `requer` **casa** com "Requer ainda a condenação", mas **não casa** com "requerimento" nem com "requerente".
-   - `prazo` **não casa** com "prazos". Por isso as variações necessárias já estão listadas no glossário.
-
-#### Regra 2 - Divisão em frases
-
-1. Divida o texto em **linhas** pelo caractere `\n`.
-2. Divida cada linha em frases **depois** de `.`, `!` ou `?` quando esse sinal for seguido de um ou mais espaços. O sinal fica na frase.
-3. Em cada frase, remova os espaços do início e do fim e troque cada sequência de espaços por um único espaço comum (`" "`).
-4. Descarte as frases que ficarem vazias. Isso inclui linhas vazias ou formadas só por espaços.
-
-Assim, um título em linha própria (ex.: "CONTRATO DE LOCAÇÃO RESIDENCIAL") é uma frase, e "Publique-se. Registre-se. Intimem-se." são três frases. Pontos que não são seguidos de espaço (ex.: `R$ 2.500,00`) não dividem a frase.
-
-Abreviações como "Art. 5º" ou "Sr. João" também dividem a frase. Esse comportamento é **intencional**: não tente corrigi-lo.
-
-#### Regra 3 - Campo `tipo`
-
-1. Para cada tipo do glossário, conte quantos **termos diferentes** daquele tipo aparecem em **pelo menos uma frase** (Regra 2). Um termo que aparece várias vezes conta uma vez só.
-2. O tipo com a **maior contagem** vence.
-3. Em caso de empate, vence o que vem primeiro nesta ordem de prioridade: `decisao`, `peticao`, `notificacao`, `contrato`.
-4. Se nenhum termo de nenhum tipo aparecer, o tipo é `outro`.
-
-Os valores possíveis de `tipo` são exatamente `contrato`, `peticao`, `decisao`, `notificacao` e `outro`: identificadores fixos, sem acento.
-
-Exemplo de empate: "O requerente juntou a sentença." tem 1 termo de `peticao` (requerente) e 1 de `decisao` (sentença), então o tipo é `decisao`.
-
-#### Regra 4 - Campo `resumo`
-
-1. Junte as **duas primeiras frases** (Regra 2) com um espaço comum entre elas. Se houver só uma frase, use apenas ela. Se não houver nenhuma, o resumo é `""`.
-2. Se o resultado tiver **mais de 300 caracteres**, mantenha os 297 primeiros, remova os espaços do final e acrescente `...`.
-
-#### Regra 5 - Campo `pontos_de_atencao`
-
-1. Inclua cada frase (Regra 2) que contenha **pelo menos um** termo de atenção do glossário.
-2. Mantenha a **ordem em que aparecem** no texto e não repita frases idênticas.
-3. Se nenhuma frase tiver termos de atenção, retorne uma lista vazia `[]`.
-
-#### Glossário
-
-**Termos de tipo**
-
-| Tipo | Termos |
-|---|---|
-| `contrato` | contratante, contratada, contratado, cláusula, pelo presente instrumento, vigência, locador, locadora, locatário, locatária |
-| `peticao` | excelentíssimo, excelentíssima, vem respeitosamente, requerente, requerido, requerida, requer, nestes termos, pede deferimento |
-| `decisao` | sentença, julgo, condeno, publique-se, registre-se, intimem-se, trânsito em julgado |
-| `notificacao` | notificação extrajudicial, notificante, notificado, notificada, notificamos |
-
-**Termos de atenção**
-
-| Termo | Por que merece atenção |
-|---|---|
-| multa, multas | Penalidade financeira por descumprimento |
-| prazo, prazos | Datas que, se perdidas, geram perda de direito ou penalidade |
-| rescisão | Encerramento do contrato e suas consequências |
-| juros | Encargo que aumenta o valor devido com o tempo |
-| correção monetária | Atualização do valor devido |
-| penalidade | Sanção prevista no documento |
-| indenização | Valor a pagar ou a receber por dano |
-| despejo | Risco de perda da posse do imóvel |
-| honorários | Custo com advogados, inclusive da parte contrária |
-
-#### Exemplos obrigatórios
-
-A pasta [`exemplos/`](exemplos/) tem **6 documentos fictícios** (`.txt`) e a **saída esperada** de cada um (`.esperado.json`):
-
-- **01 a 05:** um documento comum para cada tipo, incluindo `outro`
-- **06:** casos de borda das regras acima, com caracteres invisíveis (tab, espaço não separável, quebras de linha `\r\n` e `\r`, acentos em NFD e emojis)
-
-O passo a passo de cada exemplo, com a explicação do que o 06 testa, está em [`exemplos/README.md`](exemplos/README.md).
-
-O conteúdo de cada `.txt` corresponde ao campo `conteudo` de um documento. O seu analisador por regras deve produzir **exatamente** essas saídas, e isso deve ser verificado por **testes automatizados** que leem os arquivos diretamente da pasta `exemplos/`, sem copiá-los nem alterá-los.
-
-**Por que uma abstração?** No escritório, esse tipo de análise é feito com modelos de linguagem (LLMs). Por isso, o analisador deve ser construído como uma **interface com uma implementação trocável**: o resto da aplicação depende apenas do contrato "recebe o `conteudo`, devolve `{ tipo, resumo, pontos_de_atencao }`" e não sabe se a análise vem de regras ou de uma IA. Trocar o analisador por regras por um analisador com IA não deve exigir mudanças nas rotas, no banco ou no front-end. A implementação usada pode ser escolhida por variável de ambiente (ex.: `ANALISADOR=regras`).
-
-**Endpoint**
-- `POST /documentos/:id/analise`: executa o analisador, salva o resultado no banco e responde `201` com a análise, no mesmo formato do campo `analise` de `GET /documentos/:id`
-- Se o documento já tiver uma análise, ela é **substituída** pela nova
-- Salvar também **qual analisador** gerou a análise (`"regras"` para o analisador por regras) e **quando**
-
-**Na Página - Detalhes do Documento**
-- Botão "Analisar documento" (apenas para o autor)
-- Exibir o tipo, o resumo e a lista de pontos de atenção
-
-## Notas
-
-### Tecnologias
-
-- **Back-end:** Node.js (JavaScript ou TypeScript), com Express, Fastify, NestJS ou outro framework de sua preferência
-- **Front-end:** React (Vite, Next.js ou similar), com interface **responsiva**. Bibliotecas de UI (Tailwind, MUI, shadcn/ui etc.) são permitidas
-- **Banco de dados:** PostgreSQL, com SQL puro, query builder (Knex) ou ORM (Prisma, Drizzle, TypeORM, Sequelize)
-
-### API
-
-- Validar as entradas de todos os endpoints
-- Usar status HTTP adequados: `201` na criação, `400` para entrada inválida, `401` sem autenticação, `403` sem permissão, `404` para recurso inexistente e `409` para conflito (ex.: e-mail já cadastrado)
-- Retornar todos os erros neste formato:
+```http
+DELETE /documentos/7
+Authorization: Bearer <token de outro usuário>
+```
 
 ```json
-{
-  "erro": "VALIDACAO",
-  "mensagem": "O campo 'titulo' é obrigatório."
-}
+403
+{ "erro": "SEM_PERMISSAO", "mensagem": "Apenas o autor pode alterar este documento." }
 ```
 
-| Status | `erro` |
+## Testes
+
+Na pasta `backend`:
+
+```powershell
+npm test
+```
+
+| Arquivo | O que testa | Precisa de banco? |
+|---|---|---|
+| `test/analisador.regras.test.js` | Os 6 exemplos oficiais (saída idêntica ao `.esperado.json`), seleção do analisador e texto vazio | Não |
+| `test/server.test.js` | A API não sobe (código de saída 1) com a porta ocupada ou sem `JWT_SECRET` | Não |
+| `test/api.test.js` | Integração da API: cadastro e login (incluindo `409`, `401` e limite de tentativas), `401`, `403`, `404`, validações, ordenação, filtro `meus`, busca, paginação, regras do `PUT`, análise, remoção e concorrência entre `PUT` e análise | Sim, o `DATABASE_URL_TEST` |
+
+- Os testes de integração aplicam as migrations no banco de testes e o **limpam antes de cada teste**. Por isso o `DATABASE_URL_TEST` precisa apontar para um banco separado; se ele for igual ao `DATABASE_URL`, esses testes são pulados.
+- Sem `DATABASE_URL_TEST`, os testes de integração aparecem como pulados (`skipped`) e só os do analisador rodam.
+- O resultado esperado é `fail 0`.
+
+Para rodar só os testes do analisador:
+
+```powershell
+node --test test/analisador.regras.test.js
+```
+
+Não há testes automatizados de front-end (veja [Melhorias futuras](#melhorias-futuras)).
+
+## Build e CI
+
+**Build do front-end** (na pasta `frontend`):
+
+```powershell
+npm run build     # gera os arquivos estáticos em frontend/dist
+npm run preview   # serve o build localmente, para conferência
+```
+
+O `VITE_API_URL` é fixado no momento do build. Não há configuração de produção ou de deploy neste projeto. Para a API, o `npm start` executa sem recarregamento automático, mas continua lendo o `backend/.env`.
+
+**CI:** o arquivo `.github/workflows/ci.yml` roda a cada push e pull request, em dois jobs:
+- **backend:** sobe um PostgreSQL 16 temporário e executa `npm ci` e `npm test`, com `DATABASE_URL_TEST` e `JWT_SECRET` definidos no próprio workflow. São valores apenas do CI, não segredos.
+- **frontend:** executa `npm ci` e `npm run build`.
+
+## Decisões técnicas
+
+- **`pg` com SQL puro em vez de ORM:** são três tabelas, então um ORM traria mais configuração do que benefício. Cada consulta fica explícita no repositório e sempre usa parâmetros (`$1`, `$2`), o que evita injeção de SQL. A única parte montada no texto da consulta é a direção da ordenação, escolhida entre dois valores fixos depois da validação.
+- **Migrations próprias:** `npm run db:migrar` aplica os arquivos `.sql` de `backend/src/db/migrations/` em ordem, cada um numa transação, e registra os aplicados na tabela `migracoes`.
+- **Banco de dados:**
+  - `usuarios.email` é `UNIQUE` e sempre gravado em minúsculas;
+  - `analises.documento_id` é `UNIQUE`, e uma nova análise substitui a anterior com `INSERT ... ON CONFLICT DO UPDATE`;
+  - `analises` referencia `documentos` com `ON DELETE CASCADE`;
+  - `pontos_de_atencao` é `jsonb`;
+  - `analises.tipo` tem um `CHECK` com os cinco tipos válidos.
+- **Concorrência:** o `PUT` e a análise travam a linha do documento (`SELECT ... FOR UPDATE`) dentro de uma transação. Assim, um `PUT` que muda o conteúdo enquanto uma análise roda não deixa salva a análise do conteúdo antigo, e analisar um documento removido ao mesmo tempo responde `404`. Com um analisador lento (ex.: IA), a trava duraria o tempo da chamada.
+- **Analisador trocável:** o resto da aplicação depende apenas de `obterAnalisador()` (`backend/src/analisadores/index.js`), que devolve `{ nome, analisar(conteudo) }` conforme a variável `ANALISADOR`. O `nome` é salvo no campo `analisador`. Para adicionar um analisador com IA, basta criar a implementação e registrá-la no mapa desse arquivo.
+- **Falhar ao subir, não na primeira requisição:** a API não inicia se `DATABASE_URL` ou `JWT_SECRET` faltarem, se `ANALISADOR` for desconhecido ou se a porta estiver ocupada, e mostra a causa no terminal.
+- **Senha com no máximo 72 bytes:** o `bcrypt` só usa os primeiros 72 bytes da senha, então o final de uma senha maior seria ignorado sem aviso.
+  - Em vez de trocar o algoritmo, o que exigiria migrar os hashes já salvos, o cadastro recusa senhas acima desse tamanho com `400`.
+  - O login não mudou, então nenhuma conta existente deixa de funcionar.
+  - 72 bytes equivalem a 72 caracteres sem acento; letras acentuadas ocupam 2 bytes e emojis, 4.
+- **Limite de tentativas sem dependência:** um módulo pequeno (`services/limiteLogin.js`) guarda em memória as falhas por IP e e-mail. A contagem por e-mail **e** IP evita que um atacante bloqueie a conta de outra pessoa a partir de outros endereços.
+- **Sem bibliotecas extras de validação, CORS, testes ou variáveis de ambiente:** as validações são poucas e diretas, o CORS é um middleware de poucas linhas, os testes usam `node:test` e o `.env` é lido com o `--env-file` nativo do Node.
+- **Limites de tamanho coerentes:**
+  - título (200) e conteúdo (50.000) contam caracteres Unicode, da mesma forma que o analisador;
+  - o front-end valida os mesmos limites antes de enviar;
+  - o corpo JSON aceita até 1 MB, o suficiente para 50.000 caracteres mesmo com acentos e emojis;
+  - o arquivo `.txt` importado pode ter até 1 MB, e o texto resultante passa pelo limite de 50.000 caracteres.
+- **Dados de demonstração por script explícito (`npm run db:demo`), e não por migration:** o projeto continua subindo com o banco vazio e nenhuma conta padrão é criada sem que alguém peça.
+- **Pontos que o enunciado não define:**
+  - id inválido responde `404`;
+  - parâmetro repetido na listagem responde `400`, e os valores diferenciam maiúsculas (`ASC` é inválido);
+  - o título também é salvo sem `trim`;
+  - documentos com a mesma data de criação são ordenados pelo `id`;
+  - `atualizado_em` muda em todo `PUT`;
+  - o login não valida o formato do e-mail (um e-mail inválido simplesmente não é encontrado e responde `401`);
+  - as rotas do front-end usam `/documentos/...`, as mesmas da API, porque a API é chamada pelo endereço completo (`VITE_API_URL`), e não por proxy do Vite.
+- **Interface:** CSS puro com paleta em variáveis, cores por tipo de documento e layout adaptado a telas pequenas. A confirmação de remoção usa o `window.confirm` do navegador, que é acessível e funciona em qualquer tela.
+
+## Avaliação do analisador
+
+As regras fixas acertam o **tipo** dos exemplos 01 a 04 e classificam a procuração (05) como `outro`, que é o esperado pelas regras. Os pontos de atenção também encontram bem as frases com multa, juros, prazo e honorários. O resultado piora nos seguintes casos:
+
+- **Resumo que não resume.** O resumo é sempre as duas primeiras frases. Na sentença (03), isso vira só o cabeçalho do tribunal ("PODER JUDICIÁRIO DO ESTADO DE MINAS GERAIS Comarca de Belo Horizonte - 12ª Vara Cível"), sem dizer que o pedido foi julgado procedente. Na notificação (04), vira o título e o nome do notificante. Na petição (02), o corte em 300 caracteres termina no meio de uma palavra ("Construtora Horizonte Az...").
+- **Informação importante fora dos pontos de atenção.** Na notificação (04), a frase com o valor da dívida (R$ 5.400,00) não tem nenhum termo do glossário e fica de fora. No contrato (01), o valor do aluguel e o vencimento também não aparecem.
+- **Falsos positivos por palavra solta.** Na petição (02), a frase de abertura entra nos pontos de atenção só porque o nome da ação contém "INDENIZAÇÃO". O termo aparece, mas a frase não é um risco.
+- **Glossário limitado.** "multado" não casa com `multa`, a procuração não tem um tipo próprio e os poderes amplos dados ao advogado ("transigir", "receber valores"), que merecem atenção, não são detectados.
+- **Sem contexto.** As regras não entendem negação nem a quem um ponto se aplica, e o desempate por prioridade (`decisao` antes de `peticao`) é arbitrário, como mostra o exemplo 06, uma mensagem de cliente classificada como decisão.
+
+Um analisador com IA resolveria a maior parte disso: geraria um resumo de fato ("sentença que condena o réu a pagar R$ 7.200,00 de taxas condominiais, com correção e juros"), identificaria valores, datas e prazos sem depender de uma lista de termos, reconheceria tipos fora do glossário e explicaria por que cada ponto merece atenção. Em troca, a saída deixa de ser determinística, há custo e latência por chamada, os textos são enviados a um serviço externo (o que exige cuidado com dados sensíveis) e a resposta do modelo precisa ser validada (tipo dentro dos valores permitidos, resumo como texto, pontos como lista de textos) antes de ser salva.
+
+## Limitações conhecidas
+
+- **Limite de login em memória:** vale para um único processo da API e zera quando ela reinicia. Com várias instâncias, cada uma teria sua própria contagem. Tentativas simultâneas podem passar um pouco do limite de 5. Atrás de um proxy, todos os acessos teriam o IP do proxy, a menos que o Express seja configurado com `trust proxy`.
+- **Busca:** não ignora acentos ("peticao" não encontra "Petição").
+- **Paginação na interface:** o front-end sabe se há próxima página pedindo um item a mais; a API não informa o total de páginas.
+- **Importação:** só `.txt` em UTF-8. Arquivos em outra codificação (ex.: Windows-1252) podem aparecer com caracteres trocados. PDF não é suportado.
+- **Token:** fica no `localStorage`, o que o expõe em caso de XSS. Também não há como revogar um token antes de ele expirar (8 horas).
+- **E-mail:** domínios com acento (ex.: `ação.com.br`) não são aceitos no cadastro.
+- **Testes:** a interface não tem testes automatizados; os fluxos de tela são verificados manualmente.
+
+## Melhorias futuras
+
+Diferenciais do enunciado que **não** foram implementados:
+
+| Item | Motivo |
 |---|---|
-| `400` | `VALIDACAO` |
-| `401` | `NAO_AUTENTICADO` |
-| `403` | `SEM_PERMISSAO` |
-| `404` | `NAO_ENCONTRADO` |
-| `409` | `CONFLITO` |
+| Analisador com IA | Exige a chave de um provedor pago, que não há como configurar com segurança neste projeto. A interface já está pronta para recebê-lo, com validação da resposta do modelo e tratamento de falhas do provedor |
+| TypeScript | Migrar o projeto inteiro no prazo traria risco de regressão sem mudar o comportamento |
+| Docker / Docker Compose | O Docker não estava disponível no ambiente de desenvolvimento, e uma configuração não testada não foi incluída |
+| Histórico de análises | Exige nova tabela, endpoint e tela; ficou fora para não arriscar a regra atual de substituição e remoção da análise |
+| Testes de front-end | Exigiriam Vitest, Testing Library e jsdom; a prioridade foi cobrir as regras no back-end |
+| Swagger / OpenAPI | Os endpoints estão documentados neste README, com exemplos |
+| Deploy | Exigiria conta e credenciais em um serviço externo |
+| Importação de PDF | Exigiria uma biblioteca de extração de texto |
 
-- Datas nas respostas em formato ISO 8601 (ex.: `"2026-10-06T14:30:00.000Z"`)
+Outras melhorias: guardar o token em cookie `httpOnly`, mover o limite de login para o banco (ou Redis) se a API tiver mais de uma instância e informar o total de itens na paginação.
 
-- Separar responsabilidades. Não exigimos uma arquitetura específica, mas evite misturar rota, regra de negócio, acesso a banco e analisador no mesmo arquivo. Uma divisão como `rotas → controllers → services → repositórios` já é suficiente
+## Solução de problemas
 
-### Banco de dados
+As mensagens que vêm do PostgreSQL aparecem no idioma configurado no servidor do banco (em inglês, por exemplo, `database "..." does not exist` e `password authentication failed`).
 
-Modelo mínimo sugerido (você pode adaptar e justificar):
-
-```
-usuarios
-  id, nome, email (único), senha_hash, criado_em
-
-documentos
-  id, titulo, conteudo, autor_id -> usuarios.id, criado_em, atualizado_em
-
-analises
-  id, documento_id -> documentos.id, tipo, resumo, pontos_de_atencao,
-  analisador, criado_em
-```
-
-- Incluir **migrations** ou um script SQL para criar as tabelas do zero
-- `pontos_de_atencao` pode ser armazenado como preferir (`jsonb`, `text[]` ou tabela própria), mas a API sempre o retorna como lista
-
-### Front-end
-
-- Rotas internas protegidas
-- Estados de **carregamento** e de **erro** nas chamadas à API
-- Componentes reutilizáveis
-- Não precisa de um design elaborado, uma interface limpa e funcional é suficiente
-
-### Testes
-
-Escreva testes automatizados para o back-end (Jest, Vitest, `node:test` ou similar).
-
-**Obrigatório:**
-
-- O analisador por regras gera exatamente a saída esperada para os 6 documentos da pasta `exemplos/`
-
-**Sugestões** (não exigimos cobertura alta, mas queremos ver que você sabe **o que vale a pena testar**):
-
-- Cadastro com e-mail duplicado retorna `409`
-- Usuário não pode editar ou remover documento de outro usuário (`403`)
-- A listagem respeita a ordenação e o filtro `meus`
-
-### Documentação
-
-Substitua este README pelo README do seu projeto, contendo:
-
-1. **Como rodar** localmente, passo a passo: pré-requisitos, variáveis de ambiente (inclua um `.env.example`), banco, back-end, front-end e testes. Teste suas instruções do zero antes de entregar
-2. **Endpoints da API**, com exemplo de requisição e resposta (tabela, coleção do Postman/Insomnia/Bruno ou Swagger)
-3. **Decisões técnicas:** por que escolheu essas bibliotecas e essa organização, e o que faria diferente com mais tempo
-4. **Avaliação do analisador:** olhando as saídas dos exemplos 01 a 05, onde as regras fixas acertam e onde produzem um resultado ruim? Por exemplo, o resumo da sentença (`03`) é só o cabeçalho do tribunal. Como um analisador com IA resolveria isso?
-5. **O que ficou faltando**, se algo ficou
-
-## Diferenciais
-
-Nenhum destes itens é obrigatório. Faça primeiro o essencial bem feito.
-
-Um diferencial **não pode alterar** os formatos, status e regras obrigatórios descritos acima. Por exemplo: a paginação deve usar parâmetros opcionais, e sem eles `GET /documentos` continua respondendo exatamente como especificado.
-
-- **Analisador com IA:** uma segunda implementação do analisador usando a API de um LLM ([Anthropic Claude](https://docs.claude.com/), [Google Gemini](https://ai.google.dev/) ou [OpenAI](https://platform.openai.com/docs)), selecionável pela mesma variável de ambiente. A resposta do modelo deve ser validada antes de ser salva, e falhas do provedor (timeout, chave inválida, limite de uso) devem ser tratadas. A chave de API nunca pode ser commitada
-- **TypeScript** no back-end e/ou no front-end
-- **Docker / Docker Compose** subindo banco, API e front-end com um comando
-- **Paginação** e **busca por título** na lista de documentos
-- **Histórico de análises**: guardar as análises substituídas ou apagadas em um histórico consultável
-- **Upload de arquivo** `.txt` ou `.pdf` com extração do texto para o conteúdo do documento
-- **Testes no front-end** (Testing Library) ou testes de integração da API com banco real
-- **Documentação da API** com Swagger/OpenAPI
-- **CI** com GitHub Actions rodando os testes a cada push
-- **Deploy** em algum serviço gratuito (Render, Railway, Vercel, Fly.io etc.)
-
-## Como vamos avaliar
-
-| Critério | O que observamos |
-|---|---|
-| **Funcionamento** | Os requisitos funcionam seguindo o seu passo a passo |
-| **Organização do código** | Separação de responsabilidades, nomes claros, ausência de código duplicado ou morto |
-| **API** | Validação de entrada, status HTTP corretos, erros consistentes, regras de permissão respeitadas |
-| **Banco de dados** | Modelagem, relacionamentos, migrations e consultas |
-| **Analisador** | Regras coerentes e interface bem isolada, pronta para receber uma implementação com IA |
-| **Testes** | Testam regras que importam e rodam com um comando |
-| **Front-end** | Fluxos completos, componentes reutilizáveis, estados de carregamento e erro, responsividade |
-| **Git** | Commits pequenos e descritivos, uso de branch e Pull Request |
-| **Documentação** | Dá para rodar o projeto só lendo o README; decisões e limitações explicadas |
-| **Segurança básica** | Senha com hash, token validado, `.env` fora do repositório, nada sensível commitado |
-
-**O que não esperamos:** design sofisticado, arquitetura complexa ou que todos os diferenciais sejam implementados.
-
-## Dúvidas
-
-Se algo não estiver claro, você pode:
-
-- **Abrir um tópico em [Discussions](https://github.com/dfa-correspondente/Desafio-Trainee-Fullstack/discussions)** deste repositório original. A dúvida de um candidato costuma ser a de outros, e assim a resposta fica disponível para todos. Não publique trechos da sua solução no tópico.
-- **Enviar um e-mail** para **dellareti.invest@gmail.com**.
-
-O que este README define (regras do analisador, formatos de resposta e status HTTP) deve ser seguido exatamente. Para o que ele **não** define, você também pode tomar uma decisão, registrá-la no seu README e seguir em frente: saber decidir e justificar também faz parte do desafio.
-
-Boa sorte!
+| Sintoma | Causa provável | O que fazer |
+|---|---|---|
+| `node: .env: not found` ao rodar `npm run dev`, `npm start`, `npm run db:migrar` ou `npm run db:demo` | O arquivo `backend/.env` não existe | Na pasta `backend`, rode `Copy-Item .env.example .env` e preencha os valores |
+| `Error: Variável de ambiente DATABASE_URL não definida` (ou `JWT_SECRET`) | A variável está vazia ou ausente no `.env` | Preencha a variável em `backend/.env` |
+| `Falha ao migrar: ECONNREFUSED` | O PostgreSQL não está rodando ou a porta/host do `DATABASE_URL` está errado | Inicie o serviço do PostgreSQL (no Windows, em "Serviços") e confira host e porta |
+| `Falha ao migrar: banco de dados "..." não existe` | O banco não foi criado | Rode o `createdb` do passo [Criar os bancos](#2-criar-os-bancos) |
+| `Falha ao migrar: autenticação do tipo senha falhou` | Usuário ou senha errados no `DATABASE_URL` | Corrija o `.env`. Se a senha tiver `@`, `:`, `/` ou `#`, codifique na URL (`@` vira `%40`) |
+| `Não foi possível iniciar a API na porta 3000: ... EADDRINUSE` | Outro processo já usa a porta | Feche o outro processo ou mude `PORT` no `.env` (e ajuste `VITE_API_URL` no front-end) |
+| `Error: Analisador desconhecido: ...` | `ANALISADOR` tem um valor que não existe | Use `ANALISADOR=regras` ou remova a variável |
+| Página mostra "Não foi possível conectar à API." | A API não está rodando ou o `VITE_API_URL` aponta para outro endereço | Inicie a API e confira o `VITE_API_URL` |
+| Erro de CORS no console do navegador | O Vite subiu em outra porta (ex.: `5174`, quando a `5173` está ocupada) ou o `FRONTEND_URL` não corresponde | Ajuste `FRONTEND_URL` no `backend/.env` para o endereço exibido pelo Vite e reinicie a API |
+| Testes de integração aparecem como `skipped` | `DATABASE_URL_TEST` não definido ou igual ao `DATABASE_URL` | Crie o banco de testes e defina `DATABASE_URL_TEST` no `backend/.env` |
+| "Muitas tentativas de login" durante o desenvolvimento | 5 senhas erradas seguidas para o mesmo e-mail | Aguarde 15 minutos ou reinicie a API (a contagem fica em memória) |
+| `npm.ps1 não pode ser carregado porque a execução de scripts foi desabilitada` (ou `running scripts is disabled`) | Política de execução padrão do Windows PowerShell | Use `npm.cmd` no lugar de `npm` (ex.: `npm.cmd install`) ou libere scripts para o seu usuário com `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
+| `npm install` falha ou o Vite reclama da versão do Node | Node.js anterior ao 22.12 | Atualize o Node.js |
